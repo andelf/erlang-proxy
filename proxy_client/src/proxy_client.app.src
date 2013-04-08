@@ -7,6 +7,6 @@
                   kernel,
                   stdlib
                  ]},
-  {mod, { proxy_client_app, []}},
+  {mod, { proxy_client, []}},
   {env, []}
  ]}.
