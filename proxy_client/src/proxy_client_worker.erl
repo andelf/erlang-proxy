@@ -160,7 +160,6 @@ handle_info(timeout, #state{server_sock=RemoteSocket, client_sock=Client, client
             ?LOG("client recv error, ~p: ~p~n", [_Error, _Reason]),
             {stop, normal, State}
     end;
-
 handle_info({tcp, Client, Request}, #state{server_sock=RemoteSocket, client_sock=Client} = State) ->
     case gen_tcp:send(RemoteSocket, proxy_transform:transform(Request)) of
         ok ->

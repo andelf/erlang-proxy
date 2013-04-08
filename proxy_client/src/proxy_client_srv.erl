@@ -149,5 +149,10 @@ code_change(_OldVsn, State, _Extra) ->
 accept_loop(Socket) ->
     {ok, Client} = gen_tcp:accept(Socket),
     {ok, Pid} = proxy_client_worker_sup:start_child(Client),
-    ok = gen_tcp:controlling_process(Client, Pid),
+    case gen_tcp:controlling_process(Client, Pid) of
+        ok ->
+            ok;
+        {error, Reason} ->
+            ?LOG("accept loop error: ~p~n", [Reason])
+    end,
     accept_loop(Socket).
