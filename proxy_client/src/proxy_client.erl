@@ -1,4 +1,4 @@
--module(proxy_client_app).
+-module(proxy_client).
 
 -behaviour(application).
 

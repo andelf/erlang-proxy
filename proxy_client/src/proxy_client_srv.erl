@@ -23,6 +23,12 @@
 -record(state, {sock}).
 
 -include("proxy_defs.hrl").
+-define(SOCK_OPTIONS,
+        [binary,
+         {reuseaddr, true},
+         {active, false},
+         {nodelay, true}
+        ]).
 
 %%%===================================================================
 %%% API
