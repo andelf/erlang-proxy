@@ -48,11 +48,14 @@
 %% @spec start_link() -> {ok, Pid} | ignore | {error, Error}
 %% @end
 %%--------------------------------------------------------------------
+% Leave name {local, name} so that the process
+% remains unregistered. This enables us to start
+% mutliple processes using the pr_sup:start_child() call
 start_link(ClientSock) ->
     ConfFile = filename:join(code:priv_dir(proxy_client), "client.conf"),
     case file:consult(ConfFile) of
         {ok, Conf} ->
-            gen_server:start_link({local, ?SERVER}, ?MODULE, [{client_sock, ClientSock}|Conf], []);
+            gen_server:start_link(?MODULE, [{client_sock, ClientSock}|Conf], []);
         {error, _Reason} ->
             {error, conf_file_error}
     end.
@@ -75,6 +78,8 @@ start_link(ClientSock) ->
 init(Conf) ->
     ServerIP = proplists:get_value(server_ip, Conf),
     ServerPort = proplists:get_value(server_port, Conf),
+    ClientIP = proplists:get_value(listen_ip, Conf),
+    ClientPort = proplists:get_value(listen_port, Conf),
     Client = proplists:get_value(client_sock, Conf),
     case gen_tcp:connect(getaddr_or_fail(ServerIP), ServerPort, ?SOCK_OPTIONS) of
         {ok, RemoteSocket} ->
@@ -82,6 +87,8 @@ init(Conf) ->
             {ok, #state{server_ip=ServerIP,
                         server_port=ServerPort,
                         server_sock=RemoteSocket,
+                        client_ip=ClientIP,
+                        client_port=ClientPort,
                         client_sock=Client}, 0};
                  %%communicate(Client, RemoteSocket);
         {error, Error} ->
@@ -133,7 +140,7 @@ handle_cast(_Msg, State) ->
 %% @end
 %%--------------------------------------------------------------------
 handle_info(timeout, #state{server_sock=RemoteSocket, client_sock=Client, client_ip=LocalIP, client_port=LocalPort} = State) ->
-    try
+%%    try
         Target = find_target(Client),
         ok = inet:setopts(Client, [{active, true}]),
 
@@ -141,12 +148,12 @@ handle_info(timeout, #state{server_sock=RemoteSocket, client_sock=Client, client
 
         IP = list_to_binary(tuple_to_list(getaddr_or_fail(LocalIP))),
         ok = gen_tcp:send(Client, <<5, 0, 0, 1, IP/binary, LocalPort:16>>),
-        {noreply, State}
-    catch
-        Error:Reason ->
-            ?LOG("communicate error, ~p: ~p~n", [Error, Reason]),
-            {stop, "communicate error", State}
-    end;
+        {noreply, State};
+    %% catch
+    %%     Error:Reason ->
+    %%         ?LOG("communicate error, ~p: ~p~n", [Error, Reason]),
+    %%         {stop, "communicate error", State}
+    %% end;
 
 handle_info({tcp, Client, Request}, #state{server_sock=RemoteSocket, client_sock=Client} = State) ->
     case gen_tcp:send(RemoteSocket, proxy_transform:transform(Request)) of

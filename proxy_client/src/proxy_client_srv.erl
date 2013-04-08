@@ -148,6 +148,6 @@ code_change(_OldVsn, State, _Extra) ->
 %%%===================================================================
 accept_loop(Socket) ->
     {ok, Client} = gen_tcp:accept(Socket),
-    {ok, Pid} = supervisor:start_child(proxy_client_worker_sup, [Client]),
+    {ok, Pid} = proxy_client_worker_sup:start_child(Client),
     ok = gen_tcp:controlling_process(Client, Pid),
     accept_loop(Socket).

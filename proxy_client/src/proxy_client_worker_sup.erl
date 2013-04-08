@@ -11,7 +11,7 @@
 -behaviour(supervisor).
 
 %% API
--export([start_link/0]).
+-export([start_link/0, start_child/1]).
 
 %% Supervisor callbacks
 -export([init/1]).
@@ -32,6 +32,13 @@
 start_link() ->
     supervisor:start_link({local, ?SERVER}, ?MODULE, []).
 
+
+start_child(LSock) ->
+    % Has format SupRef, ChildId. We can leave ChildId empty as
+    % we use the simple_one_for_one strategy
+    supervisor:start_child(?SERVER, [LSock]).
+
+
 %%%===================================================================
 %%% Supervisor callbacks
 %%%===================================================================
@@ -51,13 +58,13 @@ start_link() ->
 %%--------------------------------------------------------------------
 init([]) ->
     RestartStrategy = simple_one_for_one,
-    MaxRestarts = 1000,
-    MaxSecondsBetweenRestarts = 3600,
+    MaxRestarts = 5,
+    MaxSecondsBetweenRestarts = 10,
 
     SupFlags = {RestartStrategy, MaxRestarts, MaxSecondsBetweenRestarts},
 
-    Restart =  transient,
-    Shutdown = 2000,
+    Restart =  temporary,
+    Shutdown = brutal_kill,
     Type = worker,
 
     AChild = {proxy_client_worker, {proxy_client_worker, start_link, []},
