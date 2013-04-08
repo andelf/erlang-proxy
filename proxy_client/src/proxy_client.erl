@@ -1,19 +1,39 @@
--module(client).
+-module(proxy_client).
 
 -export([start/0]).
 
 -export([start_process/1,
-        accept/1]).
+         accept/1]).
 
 -include("utils.hrl").
--include("config.hrl").
 
 
+-ifdef(DEBUG).
+-define(LOG(Msg, Args), ?LOG(Msg, Args)).
+-else.
+-define(LOG(Msg, Args), true).
+-endif.
+
+-define(SOCK_OPTIONS,
+        [binary,
+         {reuseaddr, true},
+         {active, false},
+         {nodelay, true}
+        ]).
 
 
 start() ->
-    {ok, Socket} = gen_tcp:listen(?LOCALPORT, ?OPTIONS(?GETADDR(?LOCALIP))),
-    io:format("Porxy listen on ~p:~p~n", [?LOCALIP, ?LOCALPORT]),
+    ConfFile = filename:join(code:priv_dir(proxy_client), "client.conf"),
+    case file:consult(ConfFile) of
+        {ok, Conf} ->
+            ListenPort = proplists:get_value(listen_port, Conf),
+            ListenIP = proplists:get_value(listen_ip, Conf);
+        {error, _} ->
+            ListenPort = 7070,
+            ListenIP = {127,0,0,1}
+    end,
+    {ok, Socket} = gen_tcp:listen(ListenPort, [{ip, ListenIP} | ?SOCK_OPTIONS]),
+    ?LOG("Porxy client listen on ~p : ~p~n", [ListenIP, ListenPort]),
     accept(Socket).
 
 
@@ -24,14 +44,13 @@ accept(Socket) ->
     accept(Socket).
 
 
-
 start_process(Client) ->
-    case gen_tcp:connect(?GETADDR(?REMOTEIP), ?REMOTEPORT, ?OPTIONS) of
+    case gen_tcp:connect(?GETADDR(?REMOTEIP), ?REMOTEPORT, ?SOCK_OPTIONS) of
         {ok, RemoteSocket} ->
             ok = inet:setopts(RemoteSocket, [{active, true}]),
             communicate(Client, RemoteSocket);
         {error, Error} ->
-            io:format("Connect error, ~p. ~p:~p~n", [Error, ?REMOTEIP, ?REMOTEPORT]),
+            ?LOG("Connect error, ~p. ~p:~p~n", [Error, ?REMOTEIP, ?REMOTEPORT]),
             gen_tcp:close(Client),
             exit("connect error")
     end.
@@ -43,14 +62,14 @@ communicate(Client, RemoteSocket) ->
         Target = find_target(Client),
         ok = inet:setopts(Client, [{active, true}]),
 
-        ok = gen_tcp:send(RemoteSocket, transform:transform(Target)),
+        ok = gen_tcp:send(RemoteSocket, proxy_transform:transform(Target)),
 
 
         IP = list_to_binary(tuple_to_list(?GETADDR(?LOCALIP))),
         ok = gen_tcp:send(Client, <<5, 0, 0, 1, IP/binary, ?LOCALPORT:16>>)
     catch
         Error:Reason ->
-            io:format("communicate error, ~p: ~p~n", [Error, Reason]),
+            ?LOG("communicate error, ~p: ~p~n", [Error, Reason]),
             gen_tcp:close(RemoteSocket),
             gen_tcp:close(Client),
             exit(communicateerror)
@@ -60,19 +79,17 @@ communicate(Client, RemoteSocket) ->
 
 
 
-
-
 transfer(Client, RemoteSocket) ->
     receive
         {tcp, Client, Request} ->
-            case gen_tcp:send(RemoteSocket, transform:transform(Request)) of
+            case gen_tcp:send(RemoteSocket, proxy_transform:transform(Request)) of
                 ok ->
                     transfer(Client, RemoteSocket);
                 {error, _Error} ->
                     ok
             end;
         {tcp, RemoteSocket, Response} ->
-            case gen_tcp:send(Client, transform:transform(Response)) of
+            case gen_tcp:send(Client, proxy_transform:transform(Response)) of
                 ok ->
                     transfer(Client, RemoteSocket);
                 {error, _Error} ->
@@ -81,12 +98,12 @@ transfer(Client, RemoteSocket) ->
         {tcp_closed, Client} ->
             ok;
         {tcp_error, Client, _Reason} ->
-            io:format("client error~n", []),
+            ?LOG("client error~n", []),
             ok;
         {tcp_closed, RemoteSocket} ->
             ok;
         {tcp_error, RemoteSocket, _Reason} ->
-            io:format("remote error~n", []),
+            ?LOG("remote error~n", []),
             ok
     end,
 
@@ -121,5 +138,3 @@ find_target(Client) ->
             {ok, <<Port:16>>} = gen_tcp:recv(Client, 2),
             <<?DOMAIN, Port:16, DomainLen:8, DomainBin/binary>>
     end.
-
-

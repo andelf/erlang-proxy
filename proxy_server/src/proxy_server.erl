@@ -46,7 +46,7 @@ start() ->
             ListenIP = {0,0,0,0}
     end,
     {ok, Socket} = gen_tcp:listen(ListenPort, [{ip, ListenIP} | ?SOCK_OPTIONS]),
-    ?LOG("Server listen on ~p : ~p~n", [ListenIP, ListenPort]),
+    ?LOG("Proxy server listen on ~p : ~p~n", [ListenIP, ListenPort]),
     register(proxy_gate, self()),
     register(server, spawn(?MODULE, start_server, [])),
     accept(Socket).
@@ -68,7 +68,6 @@ accept(Socket) ->
             gen_tcp:close(Client),
             accept(Socket)
     end.
-
 
 
 
@@ -187,7 +186,7 @@ communicate(Client, Address, Port) ->
 connect_target(_, _, 0) ->
     error;
 connect_target(Address, Port, Times) ->
-    case gen_tcp:connect(Address, Port, ?OPTIONS, ?TIMEOUT) of
+    case gen_tcp:connect(Address, Port, ?SOCK_OPTIONS, ?TIMEOUT) of
         {ok, TargetSocket} ->
             {ok, TargetSocket};
         {error, _Error} ->
