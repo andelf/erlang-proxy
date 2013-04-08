@@ -1,4 +1,4 @@
--module(server).
+-module(proxy_server).
 
 -export([start/0]).
 
@@ -11,30 +11,27 @@
 -include("utils.hrl").
 -include("config.hrl").
 
+%% WORKER_NUMS    - how many process will spawn when server start
+%% WORKER_TIMEOUT - an available process will exit after this timeout ,
+%%                  this is used for reduce the spawned work process.
+
 -define(CONNECT_RETRY_TIMES, 2).
 -define(WORKER_NUMS, 30).
 -define(WORKER_TIMEOUT, 600000).
 
 
-%% WORKER_NUMS    - how many process will spawn when server start
-%% WORKER_TIMEOUT - an available process will exit after this timeout ,
-%%                  this is used for reduce the spawned work process.
 
-
-
--ifdef(debug).
+-ifdef(DEBUG).
 -define(LOG(Msg, Args), io:format(Msg, Args)).
 -else.
 -define(LOG(Msg, Args), true).
 -endif.
 
 
-
-
 start() ->
     {ok, Socket} = gen_tcp:listen(?REMOTEPORT, ?OPTIONS({0,0,0,0})),
     ?LOG("Server listen on ~p~n", [?REMOTEPORT]),
-    register(gate, self()),
+    register(proxy_gate, self()),
     register(server, spawn(?MODULE, start_server, [])),
     accept(Socket).
 
@@ -45,72 +42,72 @@ accept(Socket) ->
     receive
         {ok, Pid} ->
             ok = gen_tcp:controlling_process(Client, Pid),
-            Pid ! {connect, Client}
-        after ?TIMEOUT ->
-            gen_tcp:close(Client)
-    end,
-    accept(Socket).
+            Pid ! {connect, Client},
+            accept(Socket);
+        {stop, From, Reason} ->
+            From ! {ack, stop},
+            ?LOG("Calling stop reason: ~p~n", [Reason]),
+            gen_tcp:close(Socket)
+    after ?TIMEOUT ->
+            gen_tcp:close(Client),
+            accept(Socket)
+    end.
+
 
 
 
 start_server() ->
-    start_server(start_works(?WORKER_NUMS)).
+    loop(start_workers(?WORKER_NUMS)).
 
-%% main loop, accept new connections, reuse works, and purge dead works.
-start_server(Works) ->
-    NewWorks =
+%% main loop, accept new connections, reuse workers, and purge dead workers.
+loop(Workers) ->
+    NewWorkers =
     receive
         choosepid ->
-            manage_works(choosepid, Works);
+            manage_workers(choosepid, Workers);
         {'DOWN', _Ref, process, Pid, timeout} ->
-            manage_works(timeout, Works, Pid);
+            manage_workers(timeout, Workers, Pid);
         {reuse, Pid} ->
-            manage_works(reuse, Works, Pid)
+            manage_workers(reuse, Workers, Pid)
     end,
-    start_server(NewWorks).
+    loop(NewWorkers).
 
 
 %% spawn some works as works pool.
-start_works(Num) ->
-    start_works(Num, []).
+start_workers(Num) ->
+    start_workers(Num, []).
 
-start_works(0, Works) ->
-    Works;
-start_works(Num, Works) ->
+start_workers(0, Workers) ->
+    Workers;
+start_workers(Num, Workers) ->
     {Pid, _Ref} = spawn_monitor(?MODULE, start_process, []),
-    start_works(Num-1, [Pid | Works]).
+    start_workers(Num-1, [Pid | Workers]).
 
 
 
-
-
-
-manage_works(choosepid, []) ->
-    [Head | Tail] = start_works(?WORKER_NUMS),
-    gate ! {ok, Head},
+manage_workers(choosepid, []) ->
+    [Head | Tail] = start_workers(?WORKER_NUMS),
+    proxy_gate ! {ok, Head},
     Tail;
 
-manage_works(choosepid, [Head | Tail]) ->
-    gate ! {ok, Head},
+manage_workers(choosepid, [Head | Tail]) ->
+    proxy_gate ! {ok, Head},
     Tail.
 
-manage_works(timeout, Works, Pid) ->
+manage_workers(timeout, Works, Pid) ->
     ?LOG("Clear timeout pid: ~p~n", [Pid]),
     lists:delete(Pid, Works);
 
-manage_works(reuse, Works, Pid) ->
+manage_workers(reuse, Works, Pid) ->
     ?LOG("Reuse Pid, back to pool: ~p~n", [Pid]),
-
     %% this reused pid MUST put at the tail or works list,
     %% for other works can be chosen and use.
     Works ++ [Pid].
-    
-
 
 
 start_process() ->
     receive
-        {connect, Client} -> 
+        {connect, Client} ->
             start_process(Client),
             server ! {reuse, self()},
             start_process()
@@ -119,13 +116,10 @@ start_process() ->
     end.
 
 
-
-
-
 start_process(Client) ->
     case gen_tcp:recv(Client, 1) of
         {ok, Data} ->
-            parse_address(Client, transform:transform(Data));
+            parse_address(Client, proxy_transform:transform(Data));
         {error, _Error} ->
             ?LOG("start recv client error: ~p~n", [_Error]),
             gen_tcp:close(Client)
@@ -133,26 +127,24 @@ start_process(Client) ->
     ok.
 
 
-
 parse_address(Client, AType) when AType =:= <<?IPV4>> ->
     {ok, Data} = gen_tcp:recv(Client, 6),
-    <<Port:16, Destination/binary>> = transform:transform(Data),
+    <<Port:16, Destination/binary>> = proxy_transform:transform(Data),
     Address = list_to_tuple( binary_to_list(Destination) ),
     communicate(Client, Address, Port);
 
 parse_address(Client, AType) when AType =:= <<?IPV6>> ->
     {ok, Data} = gen_tcp:recv(Client, 18),
-    <<Port:16, Destination/binary>> = transform:transform(Data),
+    <<Port:16, Destination/binary>> = proxy_transform:transform(Data),
     Address = list_to_tuple( binary_to_list(Destination) ),
     communicate(Client, Address, Port);
 
-
 parse_address(Client, AType) when AType =:= <<?DOMAIN>> ->
     {ok, Data} = gen_tcp:recv(Client, 3),
-    <<Port:16, DomainLen:8>> = transform:transform(Data),
+    <<Port:16, DomainLen:8>> = proxy_transform:transform(Data),
 
     {ok, DataRest} = gen_tcp:recv(Client, DomainLen),
-    Destination = transform:transform(DataRest),
+    Destination = proxy_transform:transform(DataRest),
 
     Address = binary_to_list(Destination),
     communicate(Client, Address, Port);
@@ -161,8 +153,6 @@ parse_address(Client, _AType) ->
     %% receive the invalid data. close the connection
     ?LOG("Invalid data!~n", []),
     gen_tcp:close(Client).
-
-
 
 
 communicate(Client, Address, Port) ->
@@ -189,15 +179,12 @@ connect_target(Address, Port, Times) ->
     end.
 
 
-
-
-
 transfer(Client, Remote) ->
     inet:setopts(Remote, [{active, once}]),
     inet:setopts(Client, [{active, once}]),
     receive
         {tcp, Client, Request} ->
-            case gen_tcp:send(Remote, transform:transform(Request)) of
+            case gen_tcp:send(Remote, proxy_transform:transform(Request)) of
                 ok ->
                     transfer(Client, Remote);
                 {error, _Error} ->
@@ -205,7 +192,7 @@ transfer(Client, Remote) ->
             end;
         {tcp, Remote, Response} ->
             %% client maybe close the connection when data transferring
-            case gen_tcp:send(Client, transform:transform(Response)) of
+            case gen_tcp:send(Client, proxy_transform:transform(Response)) of
                 ok ->
                     transfer(Client, Remote);
                 {error, _Error} ->
@@ -224,5 +211,3 @@ transfer(Client, Remote) ->
     gen_tcp:close(Remote),
     gen_tcp:close(Client),
     ok.
-
-
