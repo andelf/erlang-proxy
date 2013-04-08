@@ -140,20 +140,26 @@ handle_cast(_Msg, State) ->
 %% @end
 %%--------------------------------------------------------------------
 handle_info(timeout, #state{server_sock=RemoteSocket, client_sock=Client, client_ip=LocalIP, client_port=LocalPort} = State) ->
-%%    try
+    try
         Target = find_target(Client),
         ok = inet:setopts(Client, [{active, true}]),
-
-        ok = gen_tcp:send(RemoteSocket, proxy_transform:transform(Target)),
-
-        IP = list_to_binary(tuple_to_list(getaddr_or_fail(LocalIP))),
-        ok = gen_tcp:send(Client, <<5, 0, 0, 1, IP/binary, LocalPort:16>>),
-        {noreply, State};
-    %% catch
-    %%     Error:Reason ->
-    %%         ?LOG("communicate error, ~p: ~p~n", [Error, Reason]),
-    %%         {stop, "communicate error", State}
-    %% end;
+        try
+            ok = gen_tcp:send(RemoteSocket, proxy_transform:transform(Target)),
+            IP = list_to_binary(tuple_to_list(getaddr_or_fail(LocalIP))),
+            ok = gen_tcp:send(Client, <<5, 0, 0, 1, IP/binary, LocalPort:16>>),
+            {noreply, State}
+        catch
+            Error:Reason ->
+                ?LOG("client communication error, ~p: ~p~n", [Error, Reason]),
+                {stop, Reason, State}
+        end
+    catch
+        error:{badmatch,_} ->
+            {stop, normal, State};
+        _Error:_Reason ->
+            ?LOG("client recv error, ~p: ~p~n", [_Error, _Reason]),
+            {stop, normal, State}
+    end;
 
 handle_info({tcp, Client, Request}, #state{server_sock=RemoteSocket, client_sock=Client} = State) ->
     case gen_tcp:send(RemoteSocket, proxy_transform:transform(Request)) of
@@ -172,19 +178,17 @@ handle_info({tcp, RemoteSocket, Response}, #state{server_sock=RemoteSocket, clie
 handle_info({tcp_closed, ASocket}, #state{server_sock=RemoteSocket, client_sock=Client} = State) ->
     case ASocket of
         Client ->
-            ?LOG("client closed~n"),
             {stop, normal, State};
         RemoteSocket ->
-            ?LOG("server closed~n"),
             {stop, normal, State}
     end;
 handle_info({tcp_error, ASocket, _Reason}, #state{server_sock=RemoteSocket, client_sock=Client} = State) ->
     case ASocket of
         Client ->
-            ?LOG("client tcp error~n"),
+            ?LOG("~p client tcp error~n", [ASocket]),
             {stop, _Reason, State};
         RemoteSocket ->
-            ?LOG("server tcp error~n"),
+            ?LOG("~p server tcp error~n", [ASocket]),
             {stop, _Reason, State}
     end;
 
