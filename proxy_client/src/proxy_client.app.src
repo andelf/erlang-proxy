@@ -1,0 +1,12 @@
+{application, proxy_client,
+ [
+  {description, ""},
+  {vsn, "1"},
+  {registered, []},
+  {applications, [
+                  kernel,
+                  stdlib
+                 ]},
+  {mod, { proxy_client_app, []}},
+  {env, []}
+ ]}.
