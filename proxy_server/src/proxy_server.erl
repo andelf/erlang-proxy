@@ -9,7 +9,6 @@
 
 
 -include("utils.hrl").
--include("config.hrl").
 
 %% WORKER_NUMS    - how many process will spawn when server start
 %% WORKER_TIMEOUT - an available process will exit after this timeout ,
@@ -18,7 +17,7 @@
 -define(CONNECT_RETRY_TIMES, 2).
 -define(WORKER_NUMS, 30).
 -define(WORKER_TIMEOUT, 600000).
-
+-define(TIMEOUT, 10000).
 
 
 -ifdef(DEBUG).
@@ -27,10 +26,27 @@
 -define(LOG(Msg, Args), true).
 -endif.
 
+-define(SOCK_OPTIONS,
+        [binary,
+         {reuseaddr, true},
+         {active, false},
+         {nodelay, true}
+        ]).
+
+
 
 start() ->
-    {ok, Socket} = gen_tcp:listen(?REMOTEPORT, ?OPTIONS({0,0,0,0})),
-    ?LOG("Server listen on ~p~n", [?REMOTEPORT]),
+    ConfFile = filename:join(code:priv_dir(proxy_server), "server.conf"),
+    case file:consult(ConfFile) of
+        {ok, Conf} ->
+            ListenPort = proplists:get_value(listen_port, Conf),
+            ListenIP = proplists:get_value(listen_ip, Conf);
+        {error, _} ->
+            ListenPort = 8080,
+            ListenIP = {0,0,0,0}
+    end,
+    {ok, Socket} = gen_tcp:listen(ListenPort, [{ip, ListenIP} | ?SOCK_OPTIONS]),
+    ?LOG("Server listen on ~p : ~p~n", [ListenIP, ListenPort]),
     register(proxy_gate, self()),
     register(server, spawn(?MODULE, start_server, [])),
     accept(Socket).
@@ -44,9 +60,9 @@ accept(Socket) ->
             ok = gen_tcp:controlling_process(Client, Pid),
             Pid ! {connect, Client},
             accept(Socket);
-        {stop, From, Reason} ->
+        {stop, From, _Reason} ->
             From ! {ack, stop},
-            ?LOG("Calling stop reason: ~p~n", [Reason]),
+            ?LOG("Calling stop reason: ~p~n", [_Reason]),
             gen_tcp:close(Socket)
     after ?TIMEOUT ->
             gen_tcp:close(Client),
