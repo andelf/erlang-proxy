@@ -94,7 +94,7 @@ init(Conf) ->
         {error, Error} ->
             ?LOG("Connect error, ~p. ~p:~p~n", [Error, ServerIP, ServerPort]),
             gen_tcp:close(Client),
-            {stop, "connect error"}
+            {stop, server_connect_fail}
     end.
 
 
@@ -149,8 +149,8 @@ handle_info(timeout, #state{server_sock=RemoteSocket, client_sock=Client, client
             ok = gen_tcp:send(Client, <<5, 0, 0, 1, IP/binary, LocalPort:16>>),
             {noreply, State}
         catch
-            Error:Reason ->
-                ?LOG("client communication error, ~p: ~p~n", [Error, Reason]),
+            error:Reason ->
+                ?LOG("client communication error: ~p~n", [Reason]),
                 {stop, Reason, State}
         end
     catch

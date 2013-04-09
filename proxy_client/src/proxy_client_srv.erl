@@ -165,11 +165,16 @@ start_worker_and_hand_over(_Client, 0) ->
     ?LOG("start_worker_and_hand_over ~p max retry over~n", [_Client]),
     {error, max_retry};
 start_worker_and_hand_over(Client, Trys) ->
-    {ok, Pid} = proxy_client_worker_sup:start_child(Client),
+    {ok, Pid} = supervisor:start_child(proxy_client_worker_sup, [Client]),
     case gen_tcp:controlling_process(Client, Pid) of
         ok ->
             {ok, Pid};
+        {error, closed} ->
+            ?LOG("start_worker_and_hand_over ~p client socket closed!~n", [Client]),
+            supervisor:terminate_child(proxy_client_worker_sup, Pid),
+            {error, client_closed};
         {error, _Reason} ->
+            supervisor:terminate_child(proxy_client_worker_sup, Pid),
             ?LOG("start_worker_and_hand_over ~p set controlling_process error: ~p, retry!~n", [Client, _Reason]),
             start_worker_and_hand_over(Client, Trys - 1)
     end.
