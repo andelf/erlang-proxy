@@ -19,6 +19,8 @@
 
 -define(SERVER, ?MODULE).
 
+-define(RETRY_TIMES, 2).
+
 %% sock: client's local socket server
 -record(state, {sock}).
 
@@ -148,11 +150,26 @@ code_change(_OldVsn, State, _Extra) ->
 %%%===================================================================
 accept_loop(Socket) ->
     {ok, Client} = gen_tcp:accept(Socket),
+    %% {ok, Pid} = proxy_client_worker_sup:start_child(Client),
+    %% case gen_tcp:controlling_process(Client, Pid) of
+    %%     ok ->
+    %%         ok;
+    %%     {error, Reason} ->
+    %%         ?LOG("~p, accept_loop controlling_process error: ~p~n", [Client, Reason])
+    %% end,
+    %% here we distingush `try` and `retry`, make try = retry + 1
+    start_worker_and_hand_over(Client, ?RETRY_TIMES + 1),
+    accept_loop(Socket).
+
+start_worker_and_hand_over(_Client, 0) ->
+    ?LOG("start_worker_and_hand_over ~p max retry over~n", [_Client]),
+    {error, max_retry};
+start_worker_and_hand_over(Client, Trys) ->
     {ok, Pid} = proxy_client_worker_sup:start_child(Client),
     case gen_tcp:controlling_process(Client, Pid) of
         ok ->
-            ok;
-        {error, Reason} ->
-            ?LOG("accept loop error: ~p~n", [Reason])
-    end,
-    accept_loop(Socket).
+            {ok, Pid};
+        {error, _Reason} ->
+            ?LOG("start_worker_and_hand_over ~p set controlling_process error: ~p, retry!~n", [Client, _Reason]),
+            start_worker_and_hand_over(Client, Trys - 1)
+    end.

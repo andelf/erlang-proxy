@@ -64,7 +64,7 @@ init([]) ->
     SupFlags = {RestartStrategy, MaxRestarts, MaxSecondsBetweenRestarts},
 
     Restart =  temporary,
-    Shutdown = brutal_kill,
+    Shutdown = 2000, %% no brutal_kill,
     Type = worker,
 
     AChild = {proxy_client_worker, {proxy_client_worker, start_link, []},
