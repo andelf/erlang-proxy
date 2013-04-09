@@ -1,18 +1,5 @@
 #! /bin/bash
 
-SELF=`readlink -f "$0"`
-WORKDIR=`dirname "$SELF"`
-
-cd "$WORKDIR"
-
-cd src
-erlc transform.erl
-erlc client.erl
-
-exit_code=$?
-[[ $exit_code != 0 ]] && exit $exit_code
-
-erl -noshell +K true -s client start
-
-exit 0
-
+# +K true: enable kernel poll
+# -boot start_sasl: start sasl
+erl -pa apps/*/ebin -boot start_sasl +K true -s proxy_client
