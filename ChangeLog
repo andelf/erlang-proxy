@@ -1,2 +1,5 @@
-# 2013-03-30
-	*	Version 0.1.0, First release
+2013-04-09  Feather Andelf <andelf@gmail.com>
+	* all: now split to two otp applications
+
+2013-03-30  yueyoum  <yueyoum@gmail.com>
+	* all: Version 0.1.0, First release
