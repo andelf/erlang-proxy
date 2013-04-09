@@ -1,4 +1,4 @@
 {listen_port, 7070}.
 {listen_ip, {127,0,0,1}}.
-{server_ip, {216,231,135,179}}.
+{server_ip, {_, _, _, _}}.
 {server_port, 8888}.
