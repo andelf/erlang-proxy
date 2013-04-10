@@ -233,7 +233,14 @@ getaddr_or_fail(IP) ->
 
 find_target(Client) ->
     %% 0x05:version
-    {ok, <<Version:8, _/binary>> = Greeting} = gen_tcp:recv(Client, 0),
+    case gen_tcp:recv(Client, 0) of
+        {ok, <<Version:8, _/binary>> = Greeting} ->
+            socks_proxy_handshake(Client, Version, Greeting);
+        {error, Reason} ->
+            {error, Reason}
+    end.
+
+socks_proxy_handshake(Client, Version, Greeting) ->
     case Version of
         %% SOCKS4
         16#04 ->
@@ -251,7 +258,7 @@ find_target(Client) ->
                 {connect, Addr} ->
                     {ok, proxy_proto_socks5, {connect, Addr}};
                 {error, Reason} ->
-                    {erase, Reason}
+                    {error, Reason}
             end
     end.
 
