@@ -149,6 +149,8 @@ handle_info(timeout, #state{server_sock=RemoteSocket, client_sock=Client, client
                 IP = list_to_binary(tuple_to_list(getaddr_or_fail(LocalIP))),
                 ok = gen_tcp:send(Client, Mod:unparse_connection_response({granted, {ipv4, IP, LocalPort}})),
                 {noreply, State};
+            {error, client_closed} ->
+                {stop, normal, State};
             {error, Reason} ->
                 ?LOG("client communication init error: ~p~n", [Reason]),
                 {stop, Reason, State}
@@ -236,6 +238,8 @@ find_target(Client) ->
     case gen_tcp:recv(Client, 0) of
         {ok, <<Version:8, _/binary>> = Greeting} ->
             socks_proxy_handshake(Client, Version, Greeting);
+        {error, closed} ->
+            {error, client_closed};
         {error, Reason} ->
             {error, Reason}
     end.
