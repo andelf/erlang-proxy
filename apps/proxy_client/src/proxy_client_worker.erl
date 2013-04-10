@@ -140,25 +140,25 @@ handle_cast(_Msg, State) ->
 %% @end
 %%--------------------------------------------------------------------
 handle_info(timeout, #state{server_sock=RemoteSocket, client_sock=Client, client_ip=LocalIP, client_port=LocalPort} = State) ->
-    try
-        Target = find_target(Client),
-        ok = inet:setopts(Client, [{active, true}]),
-        try
-            ok = gen_tcp:send(RemoteSocket, proxy_transform:transform(Target)),
-            IP = list_to_binary(tuple_to_list(getaddr_or_fail(LocalIP))),
-            ok = gen_tcp:send(Client, <<5, 0, 0, 1, IP/binary, LocalPort:16>>),
-            {noreply, State}
-        catch
-            error:Reason ->
-                ?LOG("client communication error: ~p~n", [Reason]),
+%    try
+        case find_target(Client) of
+            {ok, Mod, {connect, Addr}} ->
+                Target = encode_addr(Addr),
+                ok = gen_tcp:send(RemoteSocket, proxy_transform:transform(Target)),
+                ok = inet:setopts(Client, [{active, true}]),
+                IP = list_to_binary(tuple_to_list(getaddr_or_fail(LocalIP))),
+                ok = gen_tcp:send(Client, Mod:unparse_connection_response({granted, {ipv4, IP, LocalPort}})),
+                {noreply, State};
+            {error, Reason} ->
+                ?LOG("client communication init error: ~p~n", [Reason]),
                 {stop, Reason, State}
-        end
-    catch
-        error:{badmatch,_} ->
-            {stop, normal, State};
-        _Error:_Reason ->
-            ?LOG("client recv error, ~p: ~p~n", [_Error, _Reason]),
-            {stop, normal, State}
+    %%     end
+    %% catch
+    %%     error:{badmatch,_} ->
+    %%         {stop, normal, State};
+    %%     _Error:_Reason ->
+    %%         ?LOG("client recv error, ~p: ~p~n", [_Error, _Reason]),
+    %%         {stop, normal, State}
     end;
 handle_info({tcp, Client, Request}, #state{server_sock=RemoteSocket, client_sock=Client} = State) ->
     case gen_tcp:send(RemoteSocket, proxy_transform:transform(Request)) of
@@ -232,24 +232,34 @@ getaddr_or_fail(IP) ->
 
 
 find_target(Client) ->
-    {ok, <<16#05:8, Nmethods:8>>} = gen_tcp:recv(Client, 2),
-    {ok, _Methods} = gen_tcp:recv(Client, Nmethods),
-
-    gen_tcp:send(Client, <<16#05, 16#0>>),
-    {ok, <<16#05:8, 16#01:8, _Rsv:8, AType:8>>} = gen_tcp:recv(Client, 4),
-
-    case AType of
-        ?IPV4 ->
-            {ok, <<Address:32>>} = gen_tcp:recv(Client, 4),
-            {ok, <<Port:16>>} = gen_tcp:recv(Client, 2),
-            <<?IPV4, Port:16, Address:32>>;
-        ?IPV6 ->
-            {ok, <<Address:128>>} = gen_tcp:recv(Client, 16),
-            {ok, <<Port:16>>} = gen_tcp:recv(Client, 2),
-            <<?IPV6, Port:16, Address:128>>;
-        ?DOMAIN ->
-            {ok, <<DomainLen:8>>} = gen_tcp:recv(Client, 1),
-            {ok, <<DomainBin/binary>>} = gen_tcp:recv(Client, DomainLen),
-            {ok, <<Port:16>>} = gen_tcp:recv(Client, 2),
-            <<?DOMAIN, Port:16, DomainLen:8, DomainBin/binary>>
+    %% 0x05:version
+    {ok, <<Version:8, _/binary>> = Greeting} = gen_tcp:recv(Client, 0),
+    case Version of
+        %% SOCKS4
+        16#04 ->
+            case proxy_proto_socks4:parse_greeting_request(Greeting) of
+                {connect, _UserId, Addr} ->
+                    {ok, proxy_proto_socks4, {connect, Addr}};
+                {error, Reason} ->
+                    {error, Reason}
+            end;
+        16#05 ->
+            {auth_methods, _} = proxy_proto_socks5:parse_greeting_request(Greeting),
+            gen_tcp:send(Client, proxy_proto_socks5:unparse_greeting_response(no_auth)),
+            {ok, ConnReq} = gen_tcp:recv(Client, 0),
+            case proxy_proto_socks5:parse_connection_request(ConnReq) of
+                {connect, Addr} ->
+                    {ok, proxy_proto_socks5, {connect, Addr}};
+                {error, Reason} ->
+                    {erase, Reason}
+            end
     end.
+
+encode_addr({ipv4, Address, Port}) ->
+    <<?IPV4, Port:16, Address:32>>;
+encode_addr({ipv6, Address, Port}) ->
+    <<?IPV6, Port:16, Address:128>>;
+encode_addr({domain, DomainBin, Port}) ->
+    <<?DOMAIN, Port:16, (byte_size(DomainBin)):8, DomainBin/binary>>;
+encode_addr(_) ->
+    error.
